@@ -22,17 +22,24 @@ Done!
 # How To Find Your API Keys #
 #############################
 
-1. Sign in to your Square account.
-2. Go to App Integrations
-2. Toggle sandbox or production mode [o] View test data
-3. Go to Developers from the menu and select API keys.
+1. Sign in to your Square Developer account.
+2. Create a new App using the '+' button.
+3. Name your application (ex: LiteCart Integration).
+4. Choose your options (or click 'Skip').
+5. Select who you are creating the integration for (or click 'Skip').
+6. Toggle between Sandbox or Production mode.
 
 #################################
 # How To Enable Square Checkout #
 #################################
 
-1. Sign in to your Square account.
-2. Toggle live or test mode [o] View test data
-3. Select Settings from the menu.
-4. Go to Checkout settings and enable using the toggle.
-5. Fill in the missing details.
+1. Sign in to your Square Developer account.
+2. Toggle Sandbox or Production mode.
+3. Access your ApplicationID and Access Token.
+4. Go to Modules > Payment Modules in your LiteCart dashboard.
+5. Select the settings icon next to Square Checkout.
+6. Toggle Status to Enabled.
+7. Toggle Production Mode as needed.
+8. Fill in the Application ID and Access Token from your Square account.
+9. Fill in remaining details as applies to your store.
+10. Click 'Save'.
