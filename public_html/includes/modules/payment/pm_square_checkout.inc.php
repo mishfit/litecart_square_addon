@@ -19,56 +19,33 @@
         if (!reference::country($customer['country_code'])->in_geo_zone($this->settings['geo_zone_id'], $customer)) return;
       }
 
-      $forbidden_items = $this-> settings['forbidden_items'];
-      if (!empty($forbidden_items)) {
-        foreach ($items as $item) {
+      $options = [];
 
-          $product_id = $item['product_id'];
+      try {
 
-          $result = array_search(strval($product_id), $forbidden_items);
-
-          if (!is_bool($result)) {
-            $log_message = '['. date('Y-m-d H:i:s e').'] product is **forbidden**: ' . json_encode($item['name']) . PHP_EOL . PHP_EOL;
-            file_put_contents(FS_DIR_STORAGE . 'logs/debug.log', $log_message, FILE_APPEND);
-            return;
-          } else {
-
+        // Make sure the items are not forbidden
+        if ($forbidden_items = preg_split('#\s,\s*#', $this->settings['forbidden_items'], -1, PREG_SPLIT_NO_EMPTY)) {
+          if ($detected_forbidden_items = array_intersect($forbidden_items, array_column($items, 'id'))) {
+            throw new Exception('The following products are forbidden with this option: '. implode(', ', $detected_forbidden_items));
           }
         }
-      }
 
+        // Make sure options are not forbidden
+        if ($forbidden_options = preg_split('#\s,\s*#', $this->settings['forbidden_options'], -1, PREG_SPLIT_NO_EMPTY)) {
 
-      $forbidden_options = $this-> settings['forbidden_options'];
-      if (!empty($forbidden_options)) {
-        $forbidden_option_names = array();
+          $forbidden_option_group_names = [];
 
-        foreach ($forbidden_options as $forbidden_option) {
-          $forbidden_attribute_group = new ent_attribute_group($forbidden_option);
+          foreach ($forbidden_options as $attribute_group_id) {
+            $forbidden_option_group_names[] = reference::attribute_group($attribute_group_id)->data['name'][language::$selected['code']];
+          }
 
-          $selected_language_code = language::$selected['code'];
-          $forbidden_option_name = $forbidden_attribute_group->data['name'][$selected_language_code];
-          array_push($forbidden_option_names, $forbidden_option_name);
-        }
-
-        foreach ($items as $item) {
-            $options = $item['options'];
-            if (!empty($options)) {
-              $item_option_names = array_keys($options);
-              if (!empty($item_option_names)) {
-                foreach ($item_option_names as $item_option_name) {
-                  $result = array_search($item_option_name, $forbidden_option_names);
-
-                  if (!is_bool($result)) {
-                    $log_message = '['. date('Y-m-d H:i:s e').'] option is **forbidden**: ' . json_encode($item['name']) . PHP_EOL . PHP_EOL;
-                    file_put_contents(FS_DIR_STORAGE . 'logs/debug.log', $log_message, FILE_APPEND);
-                    return;
-                  } else { }
-                }
-              }
+          foreach ($items as $item) {
+            if (empty($item['options'])) continue;
+            if ($detected_forbidden_option_group_names = array_intersect($forbidden_option_group_names, array_keys($item['options']))) {
+              throw new Exception('The following options are forbidden: '. implode(', ', $detected_forbidden_option_group_names));
             }
           }
-      }
-      $options = [];
+        }
 
         $options[] = [
           'id' => 'square',
@@ -81,6 +58,19 @@
           'confirm' => language::translate(__CLASS__.':title_pay_now', 'Pay Now'),
         ];
 
+      } catch (Exception $e) {
+        $options[] = [
+          'id' => 'square',
+          'icon' => 'images/payment/square.jpg',
+          'name' => 'Square',
+          'description' => language::translate(__CLASS__.':description', 'Payments processing with Square'),
+          'fields' => '',
+          'cost' => 0,
+          'tax_class_id' => 0,
+          'error' => $e->getMessage(),
+        ];
+      }
+
       return [
         'title' => $this->name,
         'options' => $options,
@@ -90,6 +80,7 @@
     public function transfer($order) {
 
       try {
+
         $order->save(); // Create order ID
 
         $request = [
@@ -103,22 +94,34 @@
           'cancel_url' => document::ilink('checkout'),
           'order' => [
             'location_id' => $this->settings['location_id'],
-            'reference_id' => strval($order->data['id']),
+            'reference_id' => (string)$order->data['id'],
             'name' => settings::get('store_name'),
             'line_items' => [],
           ],
         ];
 
         foreach ($order->data['items'] as $item) {
-           if ($item['price'] <= 0) continue;
-           $request['order']['line_items'][] = [
+          if ($item['price'] <= 0) continue;
+          $request['order']['line_items'][] = [
             'name' => $item['name'],
-            'quantity' => strval((float)$item['quantity']),
+            'quantity' => (string)$item['quantity'],
             'base_price_money' => [
               'amount' => $this->_amount($item['price'] + $item['tax'], $order->data['currency_code'], $order->data['currency_value']),
               'currency' => $order->data['currency_code'],
             ],
-           ];
+          ];
+        }
+
+        foreach ($order->data['order_total'] as $row) {
+          if (empty($row['calculate']) continue;
+          $request['order']['line_items'][] = [
+            'name' => $row['title'],
+            'quantity' => 1,
+            'base_price_money' => [
+              'amount' => $this->_amount($row['value'] + $row['tax'], $order->data['currency_code'], $order->data['currency_value']),
+              'currency' => $order->data['currency_code'],
+            ],
+          ];
         }
 
         $result = $this->_call('POST', '/online-checkout/payment-links', $request);
@@ -138,13 +141,14 @@
     public function verify($order) {
 
       try {
+
         if (empty(session::$data['square']['order_id'])) {
           throw new Exception('Missing order id');
         }
 
         $result = $this->_call('GET', '/orders/'. session::$data['square']['order_id']);
 
-        if (empty($result)) {
+        if (!$result) {
           throw new Exception('Failed to create payment link');
         }
 
@@ -171,14 +175,7 @@
     }
 
     private function _call($method, $endpoint, $request = null) {
-      $production_url = 'https://connect.squareup.com/v2';
-      $sandbox_url = 'https://connect.squareupsandbox.com/v2';
-      $base_url = '';
-      if (empty($this->settings['is_production'])) {
-         $base_url = $sandbox_url;
-      } else {
-        $base_url = $production_url;
-      }
+
       $client = new wrap_http();
 
       $headers = [
@@ -187,11 +184,13 @@
         'Content-Type' => 'application/json',
       ];
 
-      $url = $base_url.$endpoint;
-      $log_message = '['. date('Y-m-d H:i:s e').'] calling square url: ' . $url . PHP_EOL . PHP_EOL;
-      file_put_contents(FS_DIR_STORAGE . 'logs/debug.log', $log_message, FILE_APPEND);
-      $log_message = 'with data: ' . json_encode($request) . PHP_EOL . PHP_EOL;
-      file_put_contents(FS_DIR_STORAGE . 'logs/debug.log', $log_message, FILE_APPEND);
+      if (!$this->settings['is_production']) {
+        $url = 'https://connect.squareupsandbox.com/v2'.$endpoint;
+      } else {
+        $url = 'https://connect.squareup.com/v2'.$endpoint;
+      }
+
+      // A log with the latest HTTP request is stored in the folder storage/logs/
       $response = $client->call($method, $url, $request ? json_encode($request, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) : '', $headers);
 
       if (!$result = json_decode($response, true)) {
@@ -268,7 +267,7 @@
           'default_value' => '0',
           'title' => language::translate(__CLASS__.':title_priority', 'Priority'),
           'description' => language::translate(__CLASS__.':description_priority', 'Process this module in the given priority order.'),
-          'function' => 'int()',
+          'function' => 'number()',
         ],
         [
           'key' => 'forbidden_items',
