@@ -109,16 +109,17 @@
           ],
         ];
 
-        foreach ($order->data['items'] as $item) {
-           if ($item['price'] <= 0) continue;
-           $request['order']['line_items'][] = [
-            'name' => $item['name'],
-            'quantity' => strval((float)$item['quantity']),
-            'base_price_money' => [
-              'amount' => $this->_amount($item['price'] + $item['tax'], $order->data['currency_code'], $order->data['currency_value']),
-              'currency' => $order->data['currency_code'],
-            ],
-           ];
+        foreach ($order->data['order_total'] as $row) {
+            if (empty($row['calculate'])) continue;
+
+            $request['order']['service_charges'][] = [
+              'name' => $row['title'],
+              'amount_money' => [
+                  'amount' => $this->_amount($row['value'], $order->data['currency_code'], $order->data['currency_value']),
+                  'currency' => $order->data['currency_code'],
+              ],
+              "calculation_phase" => "SUBTOTAL_PHASE",
+            ];
         }
 
         $result = $this->_call('POST', '/online-checkout/payment-links', $request);
